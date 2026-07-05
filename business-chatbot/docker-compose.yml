@@ -1,0 +1,67 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: business-chatbot-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  rag-service:
+    build: ./rag-service
+    container_name: business-chatbot-rag
+    env_file:
+      - ./rag-service/.env
+    volumes:
+      - chroma_data:/data/chroma
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: business-chatbot-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - RAG_SERVICE_URL=http://rag-service:8000
+    depends_on:
+      - mongo
+      - rag-service
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+  
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8080
+        VITE_BUSINESS_ID: default_business_id
+        VITE_BUSINESS_NAME: Peak Mobile
+    container_name: business-chatbot-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+  admin-frontend:
+    build:
+      context: ./admin-frontend
+      args:
+        VITE_API_URL: http://localhost:8080
+    container_name: business-chatbot-admin-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5174:80"
+    restart: unless-stopped
+
+
+volumes:
+  mongo_data:
+  chroma_data:
+  
