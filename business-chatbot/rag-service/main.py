@@ -68,6 +68,14 @@ def query(req: QueryRequest):
 
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+
+    # Only keep chunks that are actually close to the question, instead of
+    # always sending all 4 retrieved chunks regardless of relevance. This is
+    # the single biggest lever for reducing tokens per request: a very
+    # specific question often only needs 1 chunk, not 4.
+    documents, metadatas = filter_relevant(documents, metadatas, distances)
+
     sources = sorted({m.get("title", "unknown") for m in metadatas}) if metadatas else []
 
     try:
@@ -81,6 +89,29 @@ def query(req: QueryRequest):
         session_id=req.session_id,
         tokens_used=llm_result["tokens_used"],
     )
+
+
+def filter_relevant(documents, metadatas, distances, max_chunks=3, relative_tolerance=0.35):
+    """
+    Chroma returns results sorted best-to-worst by distance (lower = more
+    relevant). Rather than always sending top_k chunks regardless of how
+    good the matches actually are, keep the best match plus any others
+    within `relative_tolerance` of it, capped at `max_chunks`. A very
+    specific question that clearly matches one chunk then costs far fewer
+    tokens than a vague one that spreads across several.
+    """
+    if not documents or not distances:
+        return documents, metadatas
+
+    best = distances[0]
+    kept_docs, kept_meta = [], []
+    for doc, meta, dist in zip(documents, metadatas, distances):
+        if len(kept_docs) >= max_chunks:
+            break
+        if dist <= best * (1 + relative_tolerance) or len(kept_docs) == 0:
+            kept_docs.append(doc)
+            kept_meta.append(meta)
+    return kept_docs, kept_meta
 
 
 @app.delete("/documents/{doc_id}")
