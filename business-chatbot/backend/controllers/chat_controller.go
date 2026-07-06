@@ -1,18 +1,17 @@
 package controllers
 
 import (
+	"context"
 	"net/http"
+	"time"
 
+	"business-ai-agent/config"
 	"business-ai-agent/models"
 	"business-ai-agent/services"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Ask is the endpoint any frontend (your test app today, another frontend
-// later) calls when a customer asks the business chatbot a question.
-// It never touches Mongo or the vector store directly - it just validates
-// the request and delegates to the RAG service.
 func Ask(c *gin.Context) {
 	var req models.AskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -26,5 +25,23 @@ func Ask(c *gin.Context) {
 		return
 	}
 
+	go logChatExchange(req, answer)
+
 	c.JSON(http.StatusOK, answer)
+}
+
+func logChatExchange(req models.AskRequest, answer *models.AskResponse) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	logEntry := models.ChatLog{
+		BusinessID: req.BusinessID,
+		SessionID:  req.SessionID,
+		Question:   req.Question,
+		Answer:     answer.Answer,
+		TokensUsed: answer.TokensUsed,
+		CreatedAt:  time.Now().Unix(),
+	}
+
+	config.Collection("chat_logs").InsertOne(ctx, logEntry)
 }

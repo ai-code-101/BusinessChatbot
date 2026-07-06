@@ -7,6 +7,8 @@ import {
   uploadText,
   uploadFile,
   deleteDocument,
+  fetchUsageSummary,
+  fetchUsageLogs,
 } from "../api/client.js";
 import "./DashboardPage.css";
 
@@ -17,6 +19,10 @@ export default function DashboardPage() {
   const [documents, setDocuments] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [error, setError] = useState(null);
+
+  const [usageSummary, setUsageSummary] = useState(null);
+  const [usageLogs, setUsageLogs] = useState([]);
+  const [loadingUsage, setLoadingUsage] = useState(true);
 
   const [mode, setMode] = useState("text"); // "text" | "file"
   const [title, setTitle] = useState("");
@@ -38,8 +44,22 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadUsage() {
+    setLoadingUsage(true);
+    try {
+      const [summary, logs] = await Promise.all([fetchUsageSummary(), fetchUsageLogs()]);
+      setUsageSummary(summary);
+      setUsageLogs(logs);
+    } catch (err) {
+      console.error("Failed to load usage:", err.message);
+    } finally {
+      setLoadingUsage(false);
+    }
+  }
+
   useEffect(() => {
     loadDocuments();
+    loadUsage();
   }, []);
 
   function handleLogout() {
@@ -195,6 +215,70 @@ export default function DashboardPage() {
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="dash-card dash-card-wide">
+          <div className="dash-usage-header">
+            <h2 className="dash-card-title">Token Usage</h2>
+            <button className="dash-refresh" onClick={loadUsage} type="button">
+              Refresh
+            </button>
+          </div>
+
+          {loadingUsage && <p className="dash-hint">Loading usage...</p>}
+
+          {!loadingUsage && usageSummary && (
+            <div className="dash-usage-stats">
+              <div className="dash-stat">
+                <div className="dash-stat-value">{usageSummary.total_tokens.toLocaleString()}</div>
+                <div className="dash-stat-label">Total tokens</div>
+              </div>
+              <div className="dash-stat">
+                <div className="dash-stat-value">{usageSummary.total_messages.toLocaleString()}</div>
+                <div className="dash-stat-label">Total questions asked</div>
+              </div>
+              <div className="dash-stat">
+                <div className="dash-stat-value">{usageSummary.today_tokens.toLocaleString()}</div>
+                <div className="dash-stat-label">Tokens today</div>
+              </div>
+              <div className="dash-stat">
+                <div className="dash-stat-value">{usageSummary.today_messages.toLocaleString()}</div>
+                <div className="dash-stat-label">Questions today</div>
+              </div>
+            </div>
+          )}
+
+          {!loadingUsage && usageLogs.length === 0 && (
+            <p className="dash-hint">
+              No conversations yet. Once customers start using the chat widget,
+              every question and its token cost will show up here.
+            </p>
+          )}
+
+          {!loadingUsage && usageLogs.length > 0 && (
+            <div className="dash-usage-table-wrap">
+              <table className="dash-usage-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Question</th>
+                    <th>Tokens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usageLogs.map((log) => (
+                    <tr key={log.id}>
+                      <td className="dash-usage-time">
+                        {new Date(log.created_at * 1000).toLocaleString()}
+                      </td>
+                      <td className="dash-usage-question">{log.question}</td>
+                      <td className="dash-usage-tokens">{log.tokens_used}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </main>
     </div>

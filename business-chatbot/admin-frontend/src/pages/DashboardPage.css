@@ -237,3 +237,105 @@
 .dash-doc-delete:hover {
   background: #fef2f2;
 }
+
+.dash-card-wide {
+  grid-column: 1 / -1;
+}
+
+.dash-usage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.dash-usage-header .dash-card-title {
+  margin: 0;
+}
+
+.dash-refresh {
+  background: none;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dash-refresh:hover {
+  background: #f8fafc;
+}
+
+.dash-usage-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.dash-stat {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+}
+
+.dash-stat-value {
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+  font-size: 22px;
+  color: #0b1b2e;
+}
+
+.dash-stat-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.dash-usage-table-wrap {
+  overflow-x: auto;
+}
+
+.dash-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.dash-usage-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #94a3b8;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.dash-usage-table td {
+  padding: 10px;
+  border-bottom: 1px solid #f8fafc;
+  vertical-align: top;
+}
+
+.dash-usage-time {
+  color: #94a3b8;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.dash-usage-question {
+  color: #1f2937;
+}
+
+.dash-usage-tokens {
+  font-weight: 600;
+  color: #0b1b2e;
+  text-align: right;
+  white-space: nowrap;
+}

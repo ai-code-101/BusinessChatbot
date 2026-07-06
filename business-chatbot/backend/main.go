@@ -117,6 +117,8 @@ func main() {
 			admin.POST("/documents/text", controllers.UploadText)
 			admin.GET("/documents", controllers.ListDocuments)
 			admin.DELETE("/documents/:id", controllers.DeleteDocument)
+			admin.GET("/usage/summary", controllers.GetUsageSummary)
+			admin.GET("/usage/logs", controllers.GetUsageLogs)
 		}
 
 		// Public: the actual chatbot endpoint any frontend calls

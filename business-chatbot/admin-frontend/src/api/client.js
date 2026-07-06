@@ -82,3 +82,18 @@ export async function deleteDocument(id) {
   });
   return handleResponse(res);
 }
+
+export async function fetchUsageSummary() {
+  const res = await fetch(`${API_URL}/v1/admin/usage/summary`, {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function fetchUsageLogs() {
+  const res = await fetch(`${API_URL}/v1/admin/usage/logs`, {
+    headers: { ...authHeaders() },
+  });
+  const data = await handleResponse(res);
+  return data.logs || [];
+}
