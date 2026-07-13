@@ -21,6 +21,7 @@ def generate_answer(question: str, context_chunks: list[str], model: str = None)
     context_text = "\n\n---\n\n".join(context_chunks) if context_chunks else "No relevant information found."
 
     system_prompt = (
+        "For your responses give one word answers when possible, and be concise, moreover dont explain much, and if you dont have the information, redirect them back to the website"
         "You are a helpful assistant answering questions about a specific business, "
         "using only the context provided below. If the answer isn't in the context, "
         "say you don't have that information rather than guessing.\n\n"
