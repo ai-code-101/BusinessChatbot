@@ -4,7 +4,7 @@ chunks small enough to embed and retrieve individually. Overlap keeps
 context from being cut off awkwardly at chunk boundaries.
 """
 
-def chunk_text(text: str, chunk_size: int = 550, overlap: int = 60) -> list[str]:
+def chunk_text(text: str, chunk_size: int = 300, overlap: int = 35) -> list[str]:
     text = text.strip()
     if not text:
         return []

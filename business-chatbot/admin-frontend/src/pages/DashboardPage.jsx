@@ -9,6 +9,8 @@ import {
   deleteDocument,
   fetchUsageSummary,
   fetchUsageLogs,
+  fetchModelSetting,
+  setModelSetting,
 } from "../api/client.js";
 import "./DashboardPage.css";
 
@@ -23,6 +25,12 @@ export default function DashboardPage() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [usageLogs, setUsageLogs] = useState([]);
   const [loadingUsage, setLoadingUsage] = useState(true);
+
+  const [activeModel, setActiveModel] = useState("");
+  const [availableModels, setAvailableModels] = useState([]);
+  const [loadingModel, setLoadingModel] = useState(true);
+  const [savingModel, setSavingModel] = useState(false);
+  const [modelError, setModelError] = useState(null);
 
   const [mode, setMode] = useState("text"); // "text" | "file"
   const [title, setTitle] = useState("");
@@ -51,15 +59,45 @@ export default function DashboardPage() {
       setUsageSummary(summary);
       setUsageLogs(logs);
     } catch (err) {
+      // Non-fatal - usage stats are a nice-to-have, don't block the rest of the dashboard
       console.error("Failed to load usage:", err.message);
     } finally {
       setLoadingUsage(false);
     }
   }
 
+  async function loadModelSetting() {
+    setLoadingModel(true);
+    setModelError(null);
+    try {
+      const data = await fetchModelSetting();
+      setActiveModel(data.active_model || "");
+      setAvailableModels(data.available_models || []);
+    } catch (err) {
+      setModelError(err.message);
+    } finally {
+      setLoadingModel(false);
+    }
+  }
+
+  async function handleModelChange(e) {
+    const newModel = e.target.value;
+    setSavingModel(true);
+    setModelError(null);
+    try {
+      await setModelSetting(newModel);
+      setActiveModel(newModel);
+    } catch (err) {
+      setModelError(err.message);
+    } finally {
+      setSavingModel(false);
+    }
+  }
+
   useEffect(() => {
     loadDocuments();
     loadUsage();
+    loadModelSetting();
   }, []);
 
   function handleLogout() {
@@ -122,6 +160,36 @@ export default function DashboardPage() {
       </header>
 
       <main className="dash-main">
+        <section className="dash-card dash-card-wide">
+          <h2 className="dash-card-title">Active Model</h2>
+
+          {loadingModel && <p className="dash-hint">Loading...</p>}
+
+          {!loadingModel && (
+            <>
+              <select
+                className="dash-input"
+                value={activeModel}
+                onChange={handleModelChange}
+                disabled={savingModel}
+                style={{ maxWidth: 320 }}
+              >
+                <option value="">Default</option>
+                {availableModels.map((key) => (
+                  <option key={key} value={key}>
+                    {key}
+                  </option>
+                ))}
+              </select>
+              {savingModel && <p className="dash-hint">Saving...</p>}
+              {modelError && <div className="dash-error">{modelError}</div>}
+              <p className="dash-hint">
+                Changes take effect on the very next question asked - no rebuild needed.
+              </p>
+            </>
+          )}
+        </section>
+
         <section className="dash-card">
           <h2 className="dash-card-title">Add knowledge</h2>
           <div className="dash-tabs">
@@ -248,6 +316,29 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {!loadingUsage && usageSummary && usageSummary.by_model && usageSummary.by_model.length > 0 && (
+            <div className="dash-usage-table-wrap" style={{ marginBottom: 20 }}>
+              <table className="dash-usage-table">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Messages</th>
+                    <th>Tokens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usageSummary.by_model.map((row) => (
+                    <tr key={row.model_key}>
+                      <td className="dash-usage-question">{row.model_key}</td>
+                      <td className="dash-usage-time">{row.messages}</td>
+                      <td className="dash-usage-tokens">{row.tokens.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {!loadingUsage && usageLogs.length === 0 && (
             <p className="dash-hint">
               No conversations yet. Once customers start using the chat widget,
@@ -262,6 +353,7 @@ export default function DashboardPage() {
                   <tr>
                     <th>When</th>
                     <th>Question</th>
+                    <th>Model</th>
                     <th>Tokens</th>
                   </tr>
                 </thead>
@@ -272,6 +364,7 @@ export default function DashboardPage() {
                         {new Date(log.created_at * 1000).toLocaleString()}
                       </td>
                       <td className="dash-usage-question">{log.question}</td>
+                      <td className="dash-usage-time">{log.model_key || "-"}</td>
                       <td className="dash-usage-tokens">{log.tokens_used}</td>
                     </tr>
                   ))}

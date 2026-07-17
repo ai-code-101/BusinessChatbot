@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from services.chunking import chunk_text
 from services.embeddings import embed_texts
 from services.vector_store import add_chunks, query as vector_query, delete_by_doc_id
-from services.llm import generate_answer
+from services.llm import generate_answer, AVAILABLE_MODELS
 
 app = FastAPI(title="Business RAG Service")
 
@@ -32,6 +32,7 @@ class QueryRequest(BaseModel):
     business_id: str
     question: str
     session_id: str = ""
+    model_key: str = None
 
 
 class QueryResponse(BaseModel):
@@ -39,11 +40,17 @@ class QueryResponse(BaseModel):
     sources: list[str]
     session_id: str
     tokens_used: int
+    model_key: str
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/models")
+def list_models():
+    return {"models": list(AVAILABLE_MODELS.keys())}
 
 
 @app.post("/ingest", response_model=IngestResponse)
@@ -79,7 +86,7 @@ def query(req: QueryRequest):
     sources = sorted({m.get("title", "unknown") for m in metadatas}) if metadatas else []
 
     try:
-        llm_result = generate_answer(req.question, documents)
+        llm_result = generate_answer(req.question, documents, req.model_key)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM generation failed: {str(e)}")
 
@@ -88,6 +95,7 @@ def query(req: QueryRequest):
         sources=sources,
         session_id=req.session_id,
         tokens_used=llm_result["tokens_used"],
+        model_key=llm_result["model_key"],
     )
 
 

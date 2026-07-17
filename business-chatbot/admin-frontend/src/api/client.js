@@ -97,3 +97,19 @@ export async function fetchUsageLogs() {
   const data = await handleResponse(res);
   return data.logs || [];
 }
+
+export async function fetchModelSetting() {
+  const res = await fetch(`${API_URL}/v1/admin/settings/model`, {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function setModelSetting(modelKey) {
+  const res = await fetch(`${API_URL}/v1/admin/settings/model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ model_key: modelKey }),
+  });
+  return handleResponse(res);
+}

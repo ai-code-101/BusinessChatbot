@@ -101,3 +101,27 @@ func DeleteDocumentVectors(businessID, docID string) error {
 	}
 	return nil
 }
+
+// FetchAvailableModels asks the RAG service which model keys it currently
+// supports, so the admin dashboard's dropdown always matches what's
+// actually implemented in llm.py - no need to keep two lists in sync by hand.
+func FetchAvailableModels() ([]string, error) {
+	resp, err := httpClient.Get(ragBaseURL() + "/models")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rag service models failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result.Models, nil
+}
