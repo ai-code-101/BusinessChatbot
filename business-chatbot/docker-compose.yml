@@ -1,11 +1,21 @@
 services:
-  mongo:
-    image: mongo:7
-    container_name: business-chatbot-mongo
+  postgres:
+    image: postgres:16
+    container_name: business-chatbot-postgres
+    environment:
+      POSTGRES_DB: business_chatbot
+      POSTGRES_USER: business_chatbot_app
+      POSTGRES_PASSWORD: 1122
     ports:
-      - "27017:27017"
+      - "5432:5432"
     volumes:
-      - mongo_data:/data/db
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U business_chatbot_app -d business_chatbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   rag-service:
@@ -25,11 +35,13 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      - MONGO_URI=mongodb://mongo:27017
+      - DATABASE_URL=postgres://business_chatbot_app:1122@postgres:5432/business_chatbot?sslmode=disable
       - RAG_SERVICE_URL=http://rag-service:8000
     depends_on:
-      - mongo
-      - rag-service
+      postgres:
+        condition: service_healthy
+      rag-service:
+        condition: service_started
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -61,5 +73,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongo_data:
+  postgres_data:
   chroma_data:

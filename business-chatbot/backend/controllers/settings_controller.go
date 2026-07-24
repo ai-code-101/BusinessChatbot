@@ -10,8 +10,7 @@ import (
 	"business-ai-agent/services"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/jackc/pgx/v5"
 )
 
 // GetModelSetting returns the currently active model for this business,
@@ -21,11 +20,14 @@ func GetModelSetting(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var setting models.ModelSetting
-	err := config.Collection("model_settings").FindOne(ctx, bson.M{"business_id": businessID}).Decode(&setting)
-	activeModel := ""
-	if err == nil {
-		activeModel = setting.ModelKey
+	var activeModel string
+	err := config.Pool.QueryRow(ctx,
+		`SELECT model_key FROM model_settings WHERE business_id=$1`,
+		businessID,
+	).Scan(&activeModel)
+	if err != nil && err != pgx.ErrNoRows {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch model setting", "code": "DB_ERROR"})
+		return
 	}
 
 	availableModels, err := services.FetchAvailableModels()
@@ -55,11 +57,10 @@ func SetModelSetting(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := config.Collection("model_settings").UpdateOne(
-		ctx,
-		bson.M{"business_id": businessID},
-		bson.M{"$set": bson.M{"business_id": businessID, "model_key": req.ModelKey}},
-		options.Update().SetUpsert(true),
+	_, err := config.Pool.Exec(ctx,
+		`INSERT INTO model_settings (business_id, model_key) VALUES ($1, $2)
+		 ON CONFLICT (business_id) DO UPDATE SET model_key = EXCLUDED.model_key`,
+		businessID, req.ModelKey,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save model setting", "code": "DB_ERROR"})

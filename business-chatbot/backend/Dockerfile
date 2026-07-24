@@ -1,8 +1,10 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY go.mod ./
 RUN go mod download 2>/dev/null || true
 COPY . .
+ENV GOSUMDB=off
+ENV GOPROXY=https://proxy.golang.org,direct
 RUN go mod tidy
 RUN go build -o server .
 

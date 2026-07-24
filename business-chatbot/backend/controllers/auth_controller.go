@@ -12,7 +12,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"go.mongodb.org/mongo-driver/bson"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -25,11 +24,14 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	var admin models.AdminUser
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := config.Collection("admins").FindOne(ctx, bson.M{"email": req.Email}).Decode(&admin)
+	var admin models.AdminUser
+	err := config.Pool.QueryRow(ctx,
+		`SELECT id, email, password_hash, business_id, created_at FROM admin_users WHERE email=$1`,
+		req.Email,
+	).Scan(&admin.ID, &admin.Email, &admin.PasswordHash, &admin.BusinessID, &admin.CreatedAt)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password", "code": "AUTH_FAILED"})
 		return
@@ -41,7 +43,7 @@ func Login(c *gin.Context) {
 	}
 
 	claims := middleware.Claims{
-		AdminID:    admin.ID.Hex(),
+		AdminID:    admin.ID,
 		BusinessID: admin.BusinessID,
 		Email:      admin.Email,
 		RegisteredClaims: jwt.RegisteredClaims{

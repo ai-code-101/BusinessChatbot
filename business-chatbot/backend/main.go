@@ -10,12 +10,11 @@ import (
 	"business-ai-agent/config"
 	"business-ai-agent/controllers"
 	"business-ai-agent/middleware"
-	"business-ai-agent/models"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/bson"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -39,12 +38,16 @@ func seedAdmin() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	count, err := config.Collection("admins").CountDocuments(ctx, bson.M{"email": email})
-	if err != nil {
-		log.Printf("could not check for existing admin: %v", err)
+	var existingID string
+	err := config.Pool.QueryRow(ctx,
+		`SELECT id FROM admin_users WHERE email=$1`, email,
+	).Scan(&existingID)
+	if err == nil {
+		// admin already exists, nothing to do
 		return
 	}
-	if count > 0 {
+	if err != pgx.ErrNoRows {
+		log.Printf("could not check for existing admin: %v", err)
 		return
 	}
 
@@ -54,14 +57,12 @@ func seedAdmin() {
 		return
 	}
 
-	admin := models.AdminUser{
-		Email:        email,
-		PasswordHash: string(hash),
-		BusinessID:   businessID,
-		CreatedAt:    time.Now().Unix(),
-	}
-
-	if _, err := config.Collection("admins").InsertOne(ctx, admin); err != nil {
+	_, err = config.Pool.Exec(ctx,
+		`INSERT INTO admin_users (email, password_hash, business_id, created_at)
+		 VALUES ($1, $2, $3, $4)`,
+		email, string(hash), businessID, time.Now().Unix(),
+	)
+	if err != nil {
 		log.Printf("could not seed admin: %v", err)
 		return
 	}
@@ -81,7 +82,7 @@ func main() {
 		log.Println("no .env file found, relying on environment variables")
 	}
 
-	config.ConnectMongo()
+	config.ConnectPostgres()
 	seedAdmin()
 
 	router := gin.Default()
@@ -125,6 +126,10 @@ func main() {
 
 		// Public: the actual chatbot endpoint any frontend calls
 		v1.POST("/chat/ask", controllers.Ask)
+
+		// Public: submits captured onboarding details (name/phone), which
+		// gets forwarded to the rag-service to validate and email sales
+		v1.POST("/onboarding/submit", controllers.OnboardingSubmit)
 	}
 
 	port := os.Getenv("PORT")

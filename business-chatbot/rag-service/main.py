@@ -4,6 +4,7 @@ only by the Go backend. It handles:
   - /ingest   -> chunk + embed + store a document's text
   - /query    -> embed a question, retrieve relevant chunks, ask the LLM
   - /documents/{doc_id} (DELETE) -> remove a document's vectors
+  - /onboarding/submit -> validate and email a captured name/phone
 """
 
 from fastapi import FastAPI, HTTPException
@@ -13,6 +14,8 @@ from services.chunking import chunk_text
 from services.embeddings import embed_texts
 from services.vector_store import add_chunks, query as vector_query, delete_by_doc_id
 from services.llm import generate_answer, AVAILABLE_MODELS
+from services.onboarding import validate_details
+from services.email_service import send_onboarding_email
 
 app = FastAPI(title="Business RAG Service")
 
@@ -41,6 +44,18 @@ class QueryResponse(BaseModel):
     session_id: str
     tokens_used: int
     model_key: str
+
+
+class OnboardingRequest(BaseModel):
+    business_id: str = ""
+    session_id: str = ""
+    name: str
+    phone: str
+
+
+class OnboardingResponse(BaseModel):
+    success: bool
+    message: str
 
 
 @app.get("/health")
@@ -77,10 +92,6 @@ def query(req: QueryRequest):
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
 
-    # Only keep chunks that are actually close to the question, instead of
-    # always sending all 4 retrieved chunks regardless of relevance. This is
-    # the single biggest lever for reducing tokens per request: a very
-    # specific question often only needs 1 chunk, not 4.
     documents, metadatas = filter_relevant(documents, metadatas, distances)
 
     sources = sorted({m.get("title", "unknown") for m in metadatas}) if metadatas else []
@@ -99,15 +110,21 @@ def query(req: QueryRequest):
     )
 
 
+@app.post("/onboarding/submit", response_model=OnboardingResponse)
+def onboarding_submit(req: OnboardingRequest):
+    ok, error = validate_details(req.name, req.phone)
+    if not ok:
+        raise HTTPException(status_code=400, detail=error)
+
+    try:
+        send_onboarding_email(req.name, req.phone, req.business_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to send onboarding email: {str(e)}")
+
+    return OnboardingResponse(success=True, message="Onboarding details received.")
+
+
 def filter_relevant(documents, metadatas, distances, max_chunks=3, relative_tolerance=0.35):
-    """
-    Chroma returns results sorted best-to-worst by distance (lower = more
-    relevant). Rather than always sending top_k chunks regardless of how
-    good the matches actually are, keep the best match plus any others
-    within `relative_tolerance` of it, capped at `max_chunks`. A very
-    specific question that clearly matches one chunk then costs far fewer
-    tokens than a vague one that spreads across several.
-    """
     if not documents or not distances:
         return documents, metadatas
 

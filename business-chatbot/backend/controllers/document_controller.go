@@ -11,8 +11,7 @@ import (
 	"business-ai-agent/services"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	
 )
 
 func preview(s string, n int) string {
@@ -24,7 +23,7 @@ func preview(s string, n int) string {
 
 // UploadFile handles admin uploads of a .txt file. It reads the file,
 // forwards the content to the RAG service for chunking + embedding, and
-// stores a metadata record in Mongo.
+// stores a metadata record in Postgres.
 func UploadFile(c *gin.Context) {
 	businessID := c.GetString("business_id")
 
@@ -64,12 +63,14 @@ func UploadText(c *gin.Context) {
 	saveDocument(c, businessID, req.Title, "text", req.Content)
 }
 
-// saveDocument is shared logic: create the Mongo record first (to get an
-// ID), ingest the content into the vector store, then update the chunk
-// count once the RAG service confirms how many chunks were created.
+// saveDocument is shared logic: create the Postgres record first (to get an
+// id via RETURNING), ingest the content into the vector store, then update
+// the chunk count once the RAG service confirms how many chunks were created.
 func saveDocument(c *gin.Context, businessID, title, sourceType, content string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	doc := models.Document{
-		ID:         primitive.NewObjectID(),
 		BusinessID: businessID,
 		Title:      title,
 		SourceType: sourceType,
@@ -78,26 +79,26 @@ func saveDocument(c *gin.Context, businessID, title, sourceType, content string)
 		CreatedAt:  time.Now().Unix(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if _, err := config.Collection("documents").InsertOne(ctx, doc); err != nil {
+	err := config.Pool.QueryRow(ctx,
+		`INSERT INTO documents (business_id, title, source_type, preview, chunk_count, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		doc.BusinessID, doc.Title, doc.SourceType, doc.Preview, doc.ChunkCount, doc.CreatedAt,
+	).Scan(&doc.ID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save document record", "code": "DB_ERROR"})
 		return
 	}
 
-	result, err := services.IngestDocument(businessID, doc.ID.Hex(), title, content)
+	result, err := services.IngestDocument(businessID, doc.ID, title, content)
 	if err != nil {
-		// Roll back the Mongo record if ingestion into the vector store failed,
+		// Roll back the Postgres record if ingestion into the vector store failed,
 		// so the admin doesn't see a "ghost" document with no searchable content.
-		config.Collection("documents").DeleteOne(ctx, bson.M{"_id": doc.ID})
+		config.Pool.Exec(ctx, `DELETE FROM documents WHERE id=$1`, doc.ID)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to process document: " + err.Error(), "code": "RAG_FAILURE"})
 		return
 	}
 
-	config.Collection("documents").UpdateOne(ctx, bson.M{"_id": doc.ID}, bson.M{
-		"$set": bson.M{"chunk_count": result.ChunkCount},
-	})
+	config.Pool.Exec(ctx, `UPDATE documents SET chunk_count=$1 WHERE id=$2`, result.ChunkCount, doc.ID)
 	doc.ChunkCount = result.ChunkCount
 
 	c.JSON(http.StatusCreated, doc)
@@ -110,46 +111,55 @@ func ListDocuments(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := config.Collection("documents").Find(ctx, bson.M{"business_id": businessID})
+	rows, err := config.Pool.Query(ctx,
+		`SELECT id, business_id, title, source_type, preview, chunk_count, created_at
+		 FROM documents WHERE business_id=$1 ORDER BY created_at DESC`,
+		businessID,
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch documents", "code": "DB_ERROR"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	docs := []models.Document{}
-	if err := cursor.All(ctx, &docs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode documents", "code": "DB_ERROR"})
-		return
+	for rows.Next() {
+		var d models.Document
+		if err := rows.Scan(&d.ID, &d.BusinessID, &d.Title, &d.SourceType, &d.Preview, &d.ChunkCount, &d.CreatedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode documents", "code": "DB_ERROR"})
+			return
+		}
+		docs = append(docs, d)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"documents": docs})
 }
 
-// DeleteDocument removes both the Mongo record and the associated vectors
+// DeleteDocument removes both the Postgres record and the associated vectors
 // in the RAG service, scoped to the admin's own business so one business
 // can never delete another's data.
 func DeleteDocument(c *gin.Context) {
 	businessID := c.GetString("business_id")
 	docID := c.Param("id")
 
-	objID, err := primitive.ObjectIDFromHex(docID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tag, err := config.Pool.Exec(ctx,
+		`DELETE FROM documents WHERE id=$1 AND business_id=$2`,
+		docID, businessID,
+	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid document id", "code": "INVALID_REQUEST"})
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	res, err := config.Collection("documents").DeleteOne(ctx, bson.M{"_id": objID, "business_id": businessID})
-	if err != nil || res.DeletedCount == 0 {
+	if tag.RowsAffected() == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "document not found", "code": "NOT_FOUND"})
 		return
 	}
 
 	if err := services.DeleteDocumentVectors(businessID, docID); err != nil {
-		// Mongo record is already gone; log-worthy but not fatal to the request.
+		// Postgres record is already gone; log-worthy but not fatal to the request.
 		c.JSON(http.StatusOK, gin.H{"warning": "document metadata deleted, but vector cleanup failed: " + err.Error()})
 		return
 	}

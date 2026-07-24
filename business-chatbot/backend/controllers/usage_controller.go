@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -9,8 +10,6 @@ import (
 	"business-ai-agent/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // startOfTodayUnix returns midnight today (UTC) as a unix timestamp, used
@@ -22,121 +21,95 @@ func startOfTodayUnix() int64 {
 }
 
 // GetUsageSummary returns aggregate token/message counts for the admin's
-// business - both all-time and for today, so they can see cost trends
-// without needing to check GitHub's billing dashboard.
+// business - both all-time and for today.
 func GetUsageSummary(c *gin.Context) {
 	businessID := c.GetString("business_id")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collection := config.Collection("chat_logs")
+	todayStart := startOfTodayUnix()
 
-	totalMessages, _ := collection.CountDocuments(ctx, bson.M{"business_id": businessID})
-	todayMessages, _ := collection.CountDocuments(ctx, bson.M{
-		"business_id": businessID,
-		"created_at":  bson.M{"$gte": startOfTodayUnix()},
-	})
+	var totalMessages, todayMessages int
+	var totalTokens, todayTokens int
 
-	totalTokens := sumTokens(ctx, businessID, bson.M{"business_id": businessID})
-	todayTokens := sumTokens(ctx, businessID, bson.M{
-		"business_id": businessID,
-		"created_at":  bson.M{"$gte": startOfTodayUnix()},
-	})
+	config.Pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(tokens_used), 0) FROM chat_logs WHERE business_id=$1`,
+		businessID,
+	).Scan(&totalMessages, &totalTokens)
+
+	config.Pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(tokens_used), 0) FROM chat_logs WHERE business_id=$1 AND created_at >= $2`,
+		businessID, todayStart,
+	).Scan(&todayMessages, &todayTokens)
 
 	byModel := usageByModel(ctx, businessID)
 
 	c.JSON(http.StatusOK, models.UsageSummary{
-		TotalMessages: int(totalMessages),
+		TotalMessages: totalMessages,
 		TotalTokens:   totalTokens,
 		TodayTokens:   todayTokens,
-		TodayMessages: int(todayMessages),
+		TodayMessages: todayMessages,
 		ByModel:       byModel,
 	})
 }
 
 // usageByModel groups all-time token/message counts by which model
-// generated each answer, so an admin comparing Haiku vs GPT-4.1-mini vs
-// Sonnet can see cost and volume side by side.
+// generated each answer.
 func usageByModel(ctx context.Context, businessID string) []models.ModelUsage {
-	pipeline := []bson.M{
-		{"$match": bson.M{"business_id": businessID}},
-		{"$group": bson.M{
-			"_id":      "$model_key",
-			"tokens":   bson.M{"$sum": "$tokens_used"},
-			"messages": bson.M{"$sum": 1},
-		}},
-		{"$sort": bson.M{"tokens": -1}},
-	}
-
-	cursor, err := config.Collection("chat_logs").Aggregate(ctx, pipeline)
+	rows, err := config.Pool.Query(ctx,
+		`SELECT COALESCE(NULLIF(model_key, ''), 'unknown') AS model_key,
+		        COALESCE(SUM(tokens_used), 0) AS tokens,
+		        COUNT(*) AS messages
+		 FROM chat_logs
+		 WHERE business_id=$1
+		 GROUP BY COALESCE(NULLIF(model_key, ''), 'unknown')
+		 ORDER BY tokens DESC`,
+		businessID,
+	)
 	if err != nil {
 		return []models.ModelUsage{}
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	results := []models.ModelUsage{}
-	if err := cursor.All(ctx, &results); err != nil {
-		return []models.ModelUsage{}
-	}
-
-	for i := range results {
-		if results[i].ModelKey == "" {
-			results[i].ModelKey = "unknown"
+	for rows.Next() {
+		var m models.ModelUsage
+		if err := rows.Scan(&m.ModelKey, &m.Tokens, &m.Messages); err != nil {
+			return []models.ModelUsage{}
 		}
+		results = append(results, m)
 	}
 	return results
 }
 
-// sumTokens runs a Mongo aggregation pipeline to sum tokens_used across
-// all matching chat_logs documents.
-func sumTokens(ctx context.Context, businessID string, filter bson.M) int {
-	pipeline := []bson.M{
-		{"$match": filter},
-		{"$group": bson.M{"_id": nil, "total": bson.M{"$sum": "$tokens_used"}}},
-	}
-
-	cursor, err := config.Collection("chat_logs").Aggregate(ctx, pipeline)
-	if err != nil {
-		return 0
-	}
-	defer cursor.Close(ctx)
-
-	var result []bson.M
-	if err := cursor.All(ctx, &result); err != nil || len(result) == 0 {
-		return 0
-	}
-
-	total, ok := result[0]["total"].(int32)
-	if ok {
-		return int(total)
-	}
-	if totalInt64, ok := result[0]["total"].(int64); ok {
-		return int(totalInt64)
-	}
-	return 0
-}
-
 // GetUsageLogs returns the most recent chat exchanges for this business,
-// newest first, so admins can see what customers are actually asking and
-// how many tokens each answer cost.
+// newest first.
 func GetUsageLogs(c *gin.Context) {
 	businessID := c.GetString("business_id")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	findOptions := options.Find().SetSort(bson.M{"created_at": -1}).SetLimit(50)
-
-	cursor, err := config.Collection("chat_logs").Find(ctx, bson.M{"business_id": businessID}, findOptions)
+	rows, err := config.Pool.Query(ctx,
+		`SELECT id, business_id, session_id, question, answer, model_key, tokens_used, created_at
+		 FROM chat_logs WHERE business_id=$1 ORDER BY created_at DESC LIMIT 50`,
+		businessID,
+	)
 	if err != nil {
+		log.Printf("usage logs query error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch usage logs", "code": "DB_ERROR"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	logs := []models.ChatLog{}
-	if err := cursor.All(ctx, &logs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode usage logs", "code": "DB_ERROR"})
-		return
+	for rows.Next() {
+		var l models.ChatLog
+		if err := rows.Scan(&l.ID, &l.BusinessID, &l.SessionID, &l.Question, &l.Answer, &l.ModelKey, &l.TokensUsed, &l.CreatedAt); err != nil {
+			log.Printf("usage logs scan error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode usage logs", "code": "DB_ERROR"})
+			return
+		}
+		logs = append(logs, l)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"logs": logs})
