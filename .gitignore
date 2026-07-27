@@ -1,1 +1,105 @@
-business-chatbot/rag-service/.env
+BusinessChatbot/rag-service/.env
+BusinessChatbot/backend/.env
+*.env
+*:Zone.Identifier
+EOF
+
+### ==========================================
+### SECRETS / ENV FILES — never commit these
+### ==========================================
+.env
+.env.*
+!.env.example
+*.env
+**/.env
+**/.env.*
+!**/.env.example
+
+### ==========================================
+### WSL / Windows artifacts
+### ==========================================
+*:Zone.Identifier
+*:Zone.Identifier:Zone.Identifier
+Thumbs.db
+desktop.ini
+
+### ==========================================
+### Go (backend)
+### ==========================================
+backend/server
+backend/*.exe
+backend/*.test
+backend/*.out
+backend/vendor/
+backend/tmp/
+*.log
+
+### ==========================================
+### Node / React (frontend, admin-frontend)
+### ==========================================
+node_modules/
+**/node_modules/
+dist/
+build/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+### ==========================================
+### Python / FastAPI (rag-service)
+### ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+### ==========================================
+### Docker / data volumes
+### ==========================================
+*.pid
+docker-compose.override.yml
+
+### ==========================================
+### Databases / dumps / backups
+### ==========================================
+*.sql
+!schema.sql
+*.sqlite3
+*.db
+backup_*.sql
+chroma_data/
+postgres_data/
+
+### ==========================================
+### Editors / IDEs
+### ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+### ==========================================
+### OS junk
+### ==========================================
+.DS_Store
+.Trash-*
+
+### ==========================================
+### Misc
+### ==========================================
+*.tmp
+*.bak
+coverage/
+.turbo/

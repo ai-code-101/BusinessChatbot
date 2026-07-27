@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: business-chatbot-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rag-service:
+    build: ./rag-service
+    container_name: business-chatbot-rag
+    env_file:
+      - ./rag-service/.env
+    volumes:
+      - chroma_data:/data/chroma
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: business-chatbot-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      - RAG_SERVICE_URL=http://rag-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rag-service:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8080
+        VITE_BUSINESS_ID: ${ADMIN_BUSINESS_ID}
+        VITE_BUSINESS_NAME: Peak Mobile
+    container_name: business-chatbot-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+  admin-frontend:
+    build:
+      context: ./admin-frontend
+      args:
+        VITE_API_URL: http://localhost:8080
+    container_name: business-chatbot-admin-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5174:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  chroma_data:
